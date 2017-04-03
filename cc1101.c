@@ -2,25 +2,7 @@
 #include <avr/interrupt.h>
 #include <avr/pgmspace.h>
 #include "cc1101.h"
-
-// SPI port defs
-#define SPI_PORT    PORTB
-#define SPI_DDR     DDRB
-#define SPI_SS      4
-#define SPI_MOSI    5
-#define SPI_MISO    6
-#define SPI_SCLK    7
-
-// Connection to CC1101 GDO2
-#define GDO2_CLK_PIN      2
-#define GDO2_CLK_INT      INT2
-#define GDO2_CLK_INTVECT  INT2_vect
-
-// Connection to CC1101 GDO0
-#define GDO0_DATA_DDR     DDRB
-#define GDO0_DATA_PORT    PORTB
-#define GDO0_DATA_PIN     1
-#define GDO0_DATA_IN      PINB
+#include "config.h"
 
 // Strobe commands
 #define CC1100_SRES    0x30
@@ -158,8 +140,8 @@ static void cc_enter_rx_mode(void) {
   radio_state = RS_RX;
 
   GDO0_DATA_DDR &= ~(1 << GDO0_DATA_PIN);   // Set data pin for input
-  EICRA |= (1 << ISC21);                    // Set falling edge
-  EICRA &= ~(1 << ISC20);                   //   ...
+  EICRA |= (1 << GDO2_CLK_INT_ISCn1);       // Set falling edge
+  EICRA &= ~(1 << GDO2_CLK_INT_ISCn0);      //   ...
   EIMSK |= (1 << GDO2_CLK_INT);             // Enable interrupts
 }
 
@@ -172,8 +154,8 @@ static void cc_enter_tx_mode(void) {
   radio_state = RS_TX;
 
   GDO0_DATA_DDR |= (1 << GDO0_DATA_PIN);    // Set data pin for output
-  EICRA |= (1 << ISC21);                    // Set rising edge
-  EICRA |= (1 << ISC20);                    //   ...
+  EICRA |= (1 << GDO2_CLK_INT_ISCn1);       // Set rising edge
+  EICRA |= (1 << GDO2_CLK_INT_ISCn0);       //   ...
   EIMSK |= (1 << GDO2_CLK_INT);             // Enable interrupts
 }
 
