@@ -14,10 +14,10 @@
 // SPI port defs
 #define SPI_PORT    PORTB
 #define SPI_DDR     DDRB
-#define SPI_SS      4
-#define SPI_MOSI    5
-#define SPI_MISO    6
-#define SPI_SCLK    7
+#define SPI_SS      2
+#define SPI_MOSI    3
+#define SPI_MISO    4
+#define SPI_SCLK    5
 
 // Connection to CC1101 GDO2
 #define GDO2_CLK_PIN         1
@@ -27,10 +27,10 @@
 #define GDO2_CLK_INT_ISCn1   ISC11
 
 // Connection to CC1101 GDO0
-#define GDO0_DATA_DDR     DDRB
-#define GDO0_DATA_PORT    PORTB
-#define GDO0_DATA_PIN     1
-#define GDO0_DATA_IN      PINB
+#define GDO0_DATA_DDR     DDRD
+#define GDO0_DATA_PORT    PORTD
+#define GDO0_DATA_PIN     2
+#define GDO0_DATA_IN      PIND
 
 // TTY USART
 #define TTY_UDRE_VECT   USART_UDRE_vect
