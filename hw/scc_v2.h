@@ -5,7 +5,7 @@
 #ifndef _HW_SCC_V2_H_
 #define _HW_SCC_V2_H_
 
-#define UART_BAUD_RATE   25  // 38400 with standard OSCCAL
+#define UART_BAUD_RATE   25  // 38400 @ 8MHz
 #define RINGBUF_SIZE    128
 
 // SPI port defs
