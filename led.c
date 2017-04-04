@@ -1,10 +1,8 @@
 #include <avr/interrupt.h>
-#include <avr/io.h>
 #include "led.h"
+#include "config.h"
 
-#define LED_DDR   DDRC
-#define LED_PORT  PORTC
-#define LED_PIN   6
+#ifdef HAS_LED
 
 ISR(TIMER1_COMPA_vect) {
   led_toggle();
@@ -32,3 +30,13 @@ inline void led_off() {
 inline void led_toggle() {
   LED_PORT ^= (1 << LED_PIN);
 }
+
+#else
+
+// no LED support
+inline void led_init() {}
+inline void led_on() {}
+inline void led_off() {}
+inline void led_toggle() {}
+
+#endif
