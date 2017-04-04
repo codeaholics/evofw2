@@ -1,6 +1,5 @@
-#include "ringbuf.h"
-
 #include <avr/interrupt.h>
+#include "ringbuf.h"
 
 void rb_reset(rb_t *rb) {
   rb->getoff = rb->putoff = rb->nbytes = 0;

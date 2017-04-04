@@ -1,6 +1,6 @@
-#include "transcoder.h"
 #include <stdio.h>
 #include <string.h>
+#include "transcoder.h"
 
 #define S_HEADER     0
 #define S_ADDR0      1

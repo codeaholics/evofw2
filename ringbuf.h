@@ -1,8 +1,8 @@
 #ifndef _RINGBUF_H_
 #define _RINGBUF_H_
 
-#include "config.h"
 #include <stdint.h>
+#include "config.h"
 
 #if RINGBUF_SIZE < 256
 typedef struct
