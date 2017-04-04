@@ -33,4 +33,6 @@
 #define TTY_UDRE_VECT   USART0_UDRE_vect
 #define TTY_RX_VECT     USART0_RX_vect
 
+#define NEEDS_MAIN
+
 #endif

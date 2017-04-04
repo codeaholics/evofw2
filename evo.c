@@ -1,5 +1,6 @@
 #include <avr/interrupt.h>
 #include <avr/wdt.h>
+#include "config.h"
 #include "driver.h"
 #include "tty.h"
 #include "cc1101.h"
@@ -10,7 +11,7 @@ ISR(TIMER1_COMPA_vect) {
   led_toggle();
 }
 
-int main(void) {
+void main_init(void) {
   // OSCCAL=((uint32_t)OSCCAL * 10368) / 10000;
 
   wdt_disable();
@@ -31,10 +32,20 @@ int main(void) {
 
   led_off();
   sei();
+}
+
+void main_work(void) {
+  driver_work();
+  tty_work();
+  cc_work();
+}
+
+#ifdef NEEDS_MAIN
+int main(void) {
+  main_init();
 
   while(1) {
-    driver_work();
-    tty_work();
-    cc_work();
+    main_work();
   }
 }
+#endif
