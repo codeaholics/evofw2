@@ -2,14 +2,16 @@
 #include "driver.h"
 #include "ringbuf.h"
 #include "led.h"
+#include "errors.h"
 
 static inbound_byte_fn inbound_byte;
 
 // Bytes in this buffer are raw "over the air", and still in Manchester code.
 // This allows us to use Manchester-breaking values as signal flags
-#define RX_START_OF_FRAME   0
-#define RX_FRAME_ERROR      1
-#define RX_END_OF_FRAME     2
+#define RX_START_OF_FRAME     0
+#define RX_FRAME_ERROR_START  1
+#define RX_FRAME_ERROR_STOP   2
+#define RX_END_OF_FRAME       3
 static rb_t rx_buffer;
 
 // Bytes waiting to go to the radio for transmission
@@ -63,9 +65,20 @@ void driver_work(void) {
       break;
     }
 
-    if (b == RX_FRAME_ERROR || b == RX_START_OF_FRAME) {
-      // Framing error, or unexpected start of frame
-      inbound_byte(0, -1);
+    if (b == RX_FRAME_ERROR_START) {
+      inbound_byte(0, ERR_BAD_START_BIT);
+      state = RX_READY;
+      break;
+    }
+
+    if (b == RX_FRAME_ERROR_STOP) {
+      inbound_byte(0, ERR_BAD_STOP_BIT);
+      state = RX_READY;
+      break;
+    }
+
+    if (b == RX_START_OF_FRAME) {
+      inbound_byte(0, ERR_UNEXPECTED_START_OF_FRAME);
       state = RX_READY;
       break;
     }
@@ -73,10 +86,10 @@ void driver_work(void) {
     if (b == RX_END_OF_FRAME) {
       if (state == RX_MANCH0) {
         // Good EOF
-        inbound_byte(0, 1);
+        inbound_byte(0, ERR_NONE);
       } else {
         // Bad EOF
-        inbound_byte(0, -1);
+        inbound_byte(0, ERR_UNEXPECTED_END_OF_FRAME);
       }
 
       state = RX_READY;
@@ -86,7 +99,7 @@ void driver_work(void) {
     uint8_t m = MANCH_DEC[b];
     if (m == 0xFF) {
       // Bad Manchester encoding
-      inbound_byte(0, -1);
+      inbound_byte(0, ERR_MANCHESTER_ENCODING);
       state = RX_READY;
       break;
     } else if (state == RX_MANCH0) {
@@ -161,7 +174,7 @@ uint8_t driver_accept_bit(uint8_t bit) {
   if (bit_counter == 0) {  // start bit
     if (bit) {
       // start bit shouldn't be high
-      rb_put(&rx_buffer, RX_FRAME_ERROR);
+      rb_put(&rx_buffer, RX_FRAME_ERROR_START);
       rx_in_sync = 0;
       return 0;
     }
@@ -172,7 +185,7 @@ uint8_t driver_accept_bit(uint8_t bit) {
   if (bit_counter == 9) {  // stop bit
     if (!bit) {
       // stop bit shouldn't be low
-      rb_put(&rx_buffer, RX_FRAME_ERROR);
+      rb_put(&rx_buffer, RX_FRAME_ERROR_STOP);
       rx_in_sync = 0;
       return 0;
     }

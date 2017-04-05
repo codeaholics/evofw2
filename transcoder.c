@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include "errors.h"
 #include "transcoder.h"
 
 #define S_HEADER     0
@@ -45,7 +46,7 @@ void transcoder_init(write_str_fn w, send_byte_fn s) {
   send_byte = s;
 }
 
-void transcoder_accept_inbound_byte(uint8_t b, uint8_t end) {
+void transcoder_accept_inbound_byte(uint8_t b, uint8_t status) {
   static uint8_t checksum = 0;
   static uint8_t state = S_HEADER;
   static uint8_t multi_bytes = 0;
@@ -57,9 +58,28 @@ void transcoder_accept_inbound_byte(uint8_t b, uint8_t end) {
   static uint8_t flags;
   static char str[12];
 
-  if (end) {
-    if (state != S_COMPLETE) {
-      write_str("\x11*INCOMPLETE*");
+  if (status != 0) {
+    if (state != S_COMPLETE || status != ERR_NONE) {
+      switch (status) {
+        case ERR_BAD_START_BIT:
+          write_str("\x09*ERR_BAD_START_BIT*");
+          break;
+        case ERR_BAD_STOP_BIT:
+          write_str("\x09*ERR_BAD_STOP_BIT*");
+          break;
+        case ERR_UNEXPECTED_START_OF_FRAME:
+          write_str("\x09*ERR_UNEXPECTED_START_OF_FRAME*");
+          break;
+        case ERR_UNEXPECTED_END_OF_FRAME:
+          write_str("\x09*ERR_UNEXPECTED_END_OF_FRAME*");
+          break;
+        case ERR_MANCHESTER_ENCODING:
+          write_str("\x09*ERR_MANCHESTER_ENCODING*");
+          break;
+        default:
+          write_str("\x09*ERR_UNKNOWN*");
+          break;
+      }
     }
     write_str("\r\n");
     state = S_HEADER;
@@ -68,7 +88,7 @@ void transcoder_accept_inbound_byte(uint8_t b, uint8_t end) {
 
   if (state == S_COMPLETE) {
     // bytes after end of packet?
-    write_str("\x11*E-DATA*");
+    write_str("\x09*E-DATA*");
     state = S_ERROR;
     return;
   }
@@ -91,7 +111,7 @@ void transcoder_accept_inbound_byte(uint8_t b, uint8_t end) {
     if (is_response(flags))    { write_str("--- RP --- "); return; }
     if (is_write(flags))       { write_str("---  W --- "); return; }
 
-    write_str("\x11*HDR*");
+    write_str("\x09*HDR*");
     state = S_ERROR;
     return;
   }
@@ -218,7 +238,7 @@ void transcoder_accept_inbound_byte(uint8_t b, uint8_t end) {
 
   if (state == S_CHECKSUM) {
     if (checksum != 0) {
-      write_str("\x11*CHK*");
+      write_str("\x09*CHK*");
       state = S_ERROR;
     } else {
       state = S_COMPLETE;

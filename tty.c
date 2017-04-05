@@ -12,7 +12,7 @@ static rb_t tx_buffer;
 static rb_t rx_buffer;
 
 // TX complete. Send next char; disable interrupt if nothing else to do
-ISR(USART0_UDRE_vect) {
+ISR(TTY_UDRE_VECT) {
   UDR0 = rb_get(&tx_buffer);
   if (tx_buffer.nbytes == 0) {
 	  UCSR0B &= ~(1 << UDRIE0);
@@ -20,7 +20,7 @@ ISR(USART0_UDRE_vect) {
 }
 
 // RX byte ready
-ISR(USART0_RX_vect) {
+ISR(TTY_RX_VECT) {
   uint8_t data  = UDR0;
   uint8_t flags = UCSR0A;
 
