@@ -263,6 +263,7 @@ void transcoder_accept_outbound_byte(uint8_t b) {
   static uint8_t p = 0;
   static uint8_t checksum = 0;
   static char buff[12];
+  static int bytes = 0;
 
   if (b == '\n' || b == '\r') {
     if (field == 0 && p == 0) return;  // Empty string; most likely CR-LF pair
@@ -294,7 +295,11 @@ void transcoder_accept_outbound_byte(uint8_t b) {
     if (p == 2) {
       buff[p] = 0; // null terminate
       uint8_t payload_byte;
-      sscanf(buff, "%02hhX", &payload_byte);
+      if (sscanf(buff, "%02hhX%n", &payload_byte, &bytes) < 1 || bytes != p) {
+        send_byte(0x11, 1);  // Clear the transmitter
+        field = -1;
+        return;
+      }
       SEND(payload_byte);
       p = 0;
     }
@@ -306,6 +311,9 @@ void transcoder_accept_outbound_byte(uint8_t b) {
   if (b != ' ') {
     if (p < sizeof(buff) - 1) {
       buff[p++] = b;
+    } else {
+      // No need to end/clear transmission as nothing has been transmitted yet
+      field = -1;
     }
     return;
   }
@@ -323,13 +331,23 @@ void transcoder_accept_outbound_byte(uint8_t b) {
       set_response(&flags);
     } else if(!strcmp(buff,"W")) {
       set_write(&flags);
+    } else {
+      // No need to end/clear transmission as nothing has been transmitted yet
+      field = -1;
+      return;
     }
   }
 
   if (field >= 2 && field <= 4 && buff[0] != '-') {
     uint8_t head;
     uint32_t tail;
-    sscanf(buff, "%02hhu:%06lu", &head, &tail);
+
+    if (sscanf(buff, "%02hhu:%06lu%n", &head, &tail, &bytes) < 2 || bytes != p) {
+      // No need to end/clear transmission as nothing has been transmitted yet
+      field = -1;
+      return;
+    }
+
     if (head == 18 && tail == 730) {  // blank marker from Domoticz
       addrs[field - 2] = 0x48DADA;
     } else {
@@ -345,6 +363,7 @@ void transcoder_accept_outbound_byte(uint8_t b) {
     if (header != 0xFF) {
       SEND(header);
     } else {
+      // No need to end/clear transmission as nothing has been transmitted yet
       field = -1;
       return;
     }
@@ -370,14 +389,22 @@ void transcoder_accept_outbound_byte(uint8_t b) {
 
   if (field == 5) {
     uint16_t cmd;
-    sscanf(buff, "%04X", &cmd);
+    if (sscanf(buff, "%04X%n", &cmd, &bytes) < 1 || bytes != p) {
+      send_byte(0x11, 1);  // Clear the transmitter
+      field = -1;
+      return;
+    }
     SEND((cmd >> 8) & 0xFF);
     SEND(cmd & 0xFF);
   }
 
   if (field == 6) {
     uint8_t len;
-    sscanf(buff, "%03hhu", &len);
+    if (sscanf(buff, "%03hhu%n", &len, &bytes) < 1 || bytes != p) {
+      send_byte(0x11, 1);  // Clear the transmitter
+      field = -1;
+      return;
+    }
     SEND(len);
   }
 
