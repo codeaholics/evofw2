@@ -4,12 +4,15 @@
 #include "cc1101.h"
 #include "config.h"
 
-// Strobe commands
+// Strobe commands and regiosters
 #define CC1100_SRES    0x30
 #define CC1100_SCAL    0x33
 #define CC1100_SRX     0x34
 #define CC1100_STX     0x35
 #define CC1100_SIDLE   0x36
+#define CC1100_SFRX    0x3A
+#define CC1100_SFTX    0x3B
+#define CC1100_FIFO    0x3F
 
 // Bit fields in the chip status byte
 #define CC1100_STATUS_STATE_BM   0x70
@@ -21,19 +24,36 @@
 
 // CC1101 register settings
 static const uint8_t PROGMEM CC_REGISTER_VALUES[] = {
+#if defined(USE_FIFO)
+  0x00, 0x00,  // IOCFG2 - FIFO
+  0x01, 0x2E,  // IOCFG1 - 
+  0x02, 0x06,  // IOCFG0 - Frame
+  0x03, 0x0B,  // FIFO_THR
+  0x04, 0xFF,  // SYNC1   1111 1111[1] [0]0000 00
+  0x05, 0x80,  // SYNC0,
+  0x06, 0xFF,  // PKTLEN
+  0x07, 0x80,  // PKTCTRL1,
+  0x08, 0x02,  // PKTCTRL0
+#else
   0x00, 0x0B,  // CCx_IOCFG2 (Serial Clock. Synchronous to the data in synchronous serial mode.)
   0x01, 0x2E,  // CCx_IOCFG1
   0x02, 0x0C,  // CCx_IOCFG0 (Serial Synchronous Data Output. Used for synchronous serial mode.)
   0x07, 0x00,  // CCx_PKTCTRL1
   0x08, 0x12,  // CCx_PKTCTRL0 (Synchronous serial mode, Data in on GDO0 and data out on either of the GDOx pins)
+#endif
   0x0B, 0x06,  // CCx_FSCTRL1
   0x0D, 0x21,  // CCx_FREQ2
   0x0E, 0x65,  // CCx_FREQ1
   0x0F, 0x6C,  // CCx_FREQ0
   0x10, 0x6A,  // CCx_MDMCFG4
   0x11, 0x83,  // CCx_MDMCFG3 (DRATE_M=131 data rate=38,383.4838867Hz)
+#if defined(USE_FIFO)
+  0x12, 0x16,  // CCx_MDMCFG2 (GFSK  15/16 Sync Word Carrier sense above threshold)
+  0x13, 0x22,  // CCx_MDMCFG1 (CHANSPC_E=2 NUM_PREAMBLE=4 FEC_EN=0)
+#else
   0x12, 0x10,  // CCx_MDMCFG2 (GFSK No Sync Word / Preamable)
   0x13, 0x22,  // CCx_MDMCFG1 (CHANSPC_E=2 NUM_PREAMBLE=4 FEC_EN=0)
+#endif
   0x14, 0xF8,  // CCx_MDMCFG0
   0x15, 0x50,  // CCx_DEVIATN
   0x16, 0x07,  // CCx_MCSM2
@@ -64,6 +84,15 @@ static accept_bit_fn accept_bit;
 static request_bit_fn request_bit;
 
 static volatile uint8_t radio_state;
+
+enum frame_state {
+  FRAME_IDLE,
+  FRAME_RX_START,
+  FRAME_RX,
+  FRAME_TX_START,
+  FRAME_TX
+};
+static volatile uint8_t frame_state;
 
 static void spi_init(void) {
   SPI_PORT |= (1 << SPI_SCLK);
@@ -98,6 +127,116 @@ static uint8_t spi_strobe(uint8_t b) {
   return result;
 }
 
+static uint8_t cc_write(uint8_t addr, uint8_t b) {
+  uint8_t result;
+
+  spi_assert();
+
+  while (SPI_PORT & (1 << SPI_MISO));
+
+  spi_send(addr);
+  result = spi_send(b);
+
+  spi_deassert();
+  return result;
+}
+
+static uint8_t cc_read(uint8_t addr)
+{
+  uint8_t result;
+  spi_assert();
+  while (SPI_PORT & (1 << SPI_MISO));
+
+  result = spi_send( addr | 0x80 );
+  result = spi_send(0);
+
+  while (SPI_PORT & (1 << SPI_MISO));
+
+  spi_deassert();
+  return result;
+}
+
+#if defined(USE_FIFO)
+
+static  uint16_t frameLen;
+
+#define FRAME_INT ( 1 << GDO0_INT )
+#define FIFO_INT  ( 1 << GDO2_CLK_INT )
+#define INT_MASK  ( FRAME_INT | FIFO_INT )
+
+static void read_fifo(uint8_t readAll)
+{
+  uint8_t nByte=1,nByte1=0;
+
+  nByte = cc_read(CC1100_SFTX|0x40);	// Read RXFIFO length
+  while(1) {
+    nByte1 = cc_read(CC1100_SFTX|0x40);	// Read RXFIFO length
+    if(  nByte==nByte1 ) break;
+    nByte = nByte1;
+  }
+
+  if( nByte==0 )
+    return;
+
+  if( !readAll ) nByte--;  // leave one byte in FIFO (see CC1101 errata)
+
+  while( nByte )
+  {
+    uint8_t data = cc_read(CC1100_FIFO);
+    uint8_t mask = 0x80;
+
+    while( mask )
+    {
+      uint8_t bit = ( data & mask ) ? 1:0 ;
+      if (accept_bit(bit) != 0) {
+        // Non-0 is a request to switch to transmit mode. This is called from interrupt
+        // handlers. Actual switch is delayed until main loop.
+        radio_state = RS_CHANGE_TO_TX;
+      }
+      mask >>= 1;
+    }
+
+    nByte--;
+  }
+}
+
+ISR(GDO0_INTVECT) {
+  // Frame interrupt
+  switch( frame_state )
+  {
+  case FRAME_RX_START:  // Start of RX frame;
+    EICRA &= ~( 1 << GDO0_INT_ISCn0 );       // Trigger on next falling edge
+    frame_state = FRAME_RX;
+    frameLen = 0;
+    break;
+
+  case FRAME_RX:  // End of RX Frame
+    EICRA |=  ( 1 << GDO0_INT_ISCn0 );       // Trigger on next rising edge
+    frame_state = FRAME_IDLE;
+    radio_state = RS_CHANGE_TO_TX;
+    read_fifo(1);  // We can empty FIFO now
+    break;
+
+
+  case FRAME_TX_START:  // Start of TX frame;
+    EICRA &= ~( 1 << GDO0_INT_ISCn0 );       // Trigger on next falling edge
+    frame_state = FRAME_TX;
+    break;
+
+  case FRAME_TX:  // End of TX frame;
+    EICRA |=  ( 1 << GDO0_INT_ISCn0 );       // Trigger on next rising edge
+    frame_state = FRAME_IDLE;
+    break;
+  }
+}
+
+ISR(GDO2_CLK_INTVECT) {
+  // Fifo level
+  read_fifo(0);  // Leave at least 1 byte in FIFO (see errata)
+}
+
+#else
+
 static void receive_bit(void) {
   uint8_t bit = (GDO0_DATA_IN >> GDO0_DATA_PIN) & 1;
   if (accept_bit(bit) != 0) {
@@ -123,6 +262,8 @@ static void send_bit(void) {
   }
 }
 
+#define INT_MASK (1 << GDO2_CLK_INT)
+
 ISR(GDO2_CLK_INTVECT) {
   if (radio_state == RS_RX) {
     receive_bit();
@@ -131,45 +272,53 @@ ISR(GDO2_CLK_INTVECT) {
   }
 }
 
+#endif
+
 static void cc_enter_rx_mode(void) {
-  EIMSK &= ~(1 << GDO2_CLK_INT);            // Disable interrupts
+  EIMSK &= ~INT_MASK;            // Disable interrupts
 
   while ((spi_strobe(CC1100_SIDLE) & CC1100_STATUS_STATE_BM) != CC1100_STATE_IDLE);
+  spi_strobe(CC1100_SFRX);
   while ((spi_strobe(CC1100_SRX) & CC1100_STATUS_STATE_BM) != CC1100_STATE_RX);
 
   radio_state = RS_RX;
+  frame_state = FRAME_RX_START;
 
-  GDO0_DATA_DDR &= ~(1 << GDO0_DATA_PIN);   // Set data pin for input
-  EICRA |= (1 << GDO2_CLK_INT_ISCn1);       // Set falling edge
-  EICRA &= ~(1 << GDO2_CLK_INT_ISCn0);      //   ...
-  EIMSK |= (1 << GDO2_CLK_INT);             // Enable interrupts
+#if defined(USE_FIFO)
+  EICRA |= (1 << GDO0_INT_ISCn1);          // Set edge trigger
+  EICRA |= (1 << GDO0_INT_ISCn0);          // ... rising edge
+
+  EICRA |= (1 << GDO2_CLK_INT_ISCn1);      // Set edge trigger
+  EICRA |= (1 << GDO2_CLK_INT_ISCn0);      // ... rising edge
+#else
+  GDO0_DATA_DDR &= ~(1 << GDO0_DATA_PIN);    // Set data pin for input
+  EICRA |=  (1 << GDO2_CLK_INT_ISCn1);       // Set falling edge
+  EICRA &= ~(1 << GDO2_CLK_INT_ISCn0);       //   ...
+#endif
+  EIMSK |= INT_MASK;            // Enable interrupts
 }
 
 static void cc_enter_tx_mode(void) {
-  EIMSK &= ~(1 << GDO2_CLK_INT);            // Disable interrupts
+  EIMSK &= ~INT_MASK;            // Disable interrupts
 
   while ((spi_strobe(CC1100_SIDLE) & CC1100_STATUS_STATE_BM) != CC1100_STATE_IDLE);
   while ((spi_strobe(CC1100_STX) & CC1100_STATUS_STATE_BM) != CC1100_STATE_TX);
 
   radio_state = RS_TX;
+  frame_state = FRAME_TX_START;
 
+#if!defined(USE_FIFO)
+  EICRA |= (1 << GDO0_INT_ISCn1);          // Set edge trigger
+  EICRA |= (1 << GDO0_INT_ISCn0);          // ... rising edge
+
+  EICRA |= (1 << GDO2_CLK_INT_ISCn1);      // Set edge trigger
+  EICRA |= (1 << GDO2_CLK_INT_ISCn0);      // ... rising edge
+#else
   GDO0_DATA_DDR |= (1 << GDO0_DATA_PIN);    // Set data pin for output
   EICRA |= (1 << GDO2_CLK_INT_ISCn1);       // Set rising edge
   EICRA |= (1 << GDO2_CLK_INT_ISCn0);       //   ...
-  EIMSK |= (1 << GDO2_CLK_INT);             // Enable interrupts
-}
-
-static uint8_t cc_write(uint8_t addr, uint8_t b) {
-  uint8_t result;
-
-  spi_assert();
-  while (SPI_PORT & (1 << SPI_MISO));
-
-  spi_send(addr);
-  result = spi_send(b);
-
-  spi_deassert();
-  return result;
+#endif
+  EIMSK |= INT_MASK;            // Enable interrupts
 }
 
 void cc_init(accept_bit_fn a, request_bit_fn r) {
@@ -196,7 +345,8 @@ void cc_init(accept_bit_fn a, request_bit_fn r) {
     cc_write(reg, val);
   }
 
-  cc_enter_rx_mode();
+  radio_state = RS_CHANGE_TO_RX;
+  frame_state = FRAME_IDLE;
 }
 
 void cc_work(void) {
@@ -206,3 +356,4 @@ void cc_work(void) {
     cc_enter_tx_mode();
   }
 }
+

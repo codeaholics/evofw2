@@ -24,6 +24,11 @@
 #define GDO2_CLK_INT_ISCn1   ISC01
 
 // Connection to CC1101 GDO0
+#define GDO0_INT         INT1
+#define GDO0_INTVECT     INT1_vect
+#define GDO0_INT_ISCn0   ISC10
+#define GDO0_INT_ISCn1   ISC11
+
 #define GDO0_DATA_DDR     DDRD
 #define GDO0_DATA_PORT    PORTD
 #define GDO0_DATA_PIN     3
@@ -40,5 +45,6 @@
 
 #define NEEDS_MAIN
 #define HAS_LED
+#define USE_FIFO
 
 #endif
