@@ -1,6 +1,12 @@
 #include <stdio.h>
 #include <string.h>
+
+#include "tty.h"
+
+#include "config.h"
 #include "errors.h"
+#include "tty.h"
+#include "ringbuf.h"
 #include "transcoder.h"
 
 #define S_HEADER     0
@@ -246,6 +252,79 @@ void transcoder_accept_inbound_byte(uint8_t b, uint8_t status) {
     return;
   }
 }
+
+#if defined(USE_FIFO)
+
+static rb_t rx_buffer;
+
+uint16_t transcoder_param_len( uint8_t hdr ) {
+  uint16_t paramLen = 0;
+  uint8_t flags = HEADER_FLAGS[ (hdr >> 2) & 0x0F ];
+
+  if( has_addr0( flags ) ) paramLen += 3;
+  if( has_addr1( flags ) ) paramLen += 3;
+  if( has_addr2( flags ) ) paramLen += 3;
+
+  if( has_param0( hdr ) ) paramLen += 1;
+  if( has_param1( hdr ) ) paramLen += 1;
+
+  return paramLen;
+}
+
+void transcoder_rx_byte( uint8_t byte ) {
+  if( byte==0xFF ) rb_put( &rx_buffer, 0xFF ); // Add escape char
+  rb_put( &rx_buffer, byte );
+}
+
+void transcoder_rx_status( uint8_t status ) {
+  rb_put( &rx_buffer, 0xFF );  // Add escape char
+  rb_put( &rx_buffer, status );
+}
+
+static void transcoder_rx_work(void) {
+  static uint8_t status=0;
+
+  while( !rb_empty( &rx_buffer )) {
+   uint8_t byte = rb_get(&rx_buffer);
+    if( byte==0xFF && status==0 ) {
+      status = 1; // Escape value seen
+    } else {
+      if( status==1 && byte!=0xFF ) {
+//        tty_write_char('!');  tty_write_hex( byte);
+//        if( byte == TC_RX_END ) tty_write_str("\r\n");
+//#if 0
+        switch( byte ) {
+        case TC_RX_IDLE:
+        case TC_RX_END:
+          transcoder_accept_inbound_byte(0,ERR_NONE);
+          break;
+
+        case TC_RX_MANCHESTER_DECODE_ERROR:
+          transcoder_accept_inbound_byte(0,ERR_MANCHESTER_ENCODING);
+          break;
+
+        case TC_RX_ABORTED:
+          transcoder_accept_inbound_byte(0,ERR_UNEXPECTED_END_OF_FRAME);
+          break;
+        }
+//#endif
+      } else {
+//        tty_write_hex(byte);
+        transcoder_accept_inbound_byte(byte,0);
+      }
+      status = 0;
+    }
+  }
+}
+
+static void transcoder_tx_work(void) {
+}
+
+void transcoder_work(void) {
+  transcoder_rx_work();
+  transcoder_tx_work();
+}
+#endif
 
 #define SEND(byte) { checksum += byte; send_byte(byte, 0); }
 

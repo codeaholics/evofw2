@@ -1,7 +1,7 @@
 #include <avr/interrupt.h>
 #include <avr/wdt.h>
 #include "config.h"
-#include "driver.h"
+#include "bitstream.h"
 #include "tty.h"
 #include "cc1101.h"
 #include "led.h"
@@ -14,17 +14,17 @@ void main_init(void) {
   led_init();
 
   // Wire up components
-  transcoder_init(&tty_write_str, &driver_send_byte);
-  driver_init(&transcoder_accept_inbound_byte);
+  transcoder_init(&tty_write_str, 0);//&driver_send_byte);
+  bs_init();
   tty_init(&transcoder_accept_outbound_byte);
-  cc_init(&driver_accept_bit, &driver_request_bit);
+  cc_init(0,0);//&driver_accept_bit, &driver_request_bit);
 
   led_off();
   sei();
 }
 
 void main_work(void) {
-  driver_work();
+  transcoder_work();
   tty_work();
   cc_work();
 }

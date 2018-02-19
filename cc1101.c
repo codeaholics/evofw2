@@ -1,8 +1,10 @@
-#include <util/delay.h>
 #include <avr/interrupt.h>
 #include <avr/pgmspace.h>
-#include "cc1101.h"
+#include <util/delay.h>
+
 #include "config.h"
+#include "bitstream.h"
+#include "cc1101.h"
 
 // Strobe commands and regiosters
 #define CC1100_SRES    0x30
@@ -28,7 +30,7 @@ static const uint8_t PROGMEM CC_REGISTER_VALUES[] = {
   0x00, 0x00,  // IOCFG2 - FIFO
   0x01, 0x2E,  // IOCFG1 - 
   0x02, 0x06,  // IOCFG0 - Frame
-  0x03, 0x0B,  // FIFO_THR
+  0x03, 0x00,  // FIFO_THR
   0x04, 0xFF,  // SYNC1   1111 1111[1] [0]0000 00
   0x05, 0x80,  // SYNC0,
   0x06, 0xFF,  // PKTLEN
@@ -57,7 +59,7 @@ static const uint8_t PROGMEM CC_REGISTER_VALUES[] = {
   0x14, 0xF8,  // CCx_MDMCFG0
   0x15, 0x50,  // CCx_DEVIATN
   0x16, 0x07,  // CCx_MCSM2
-  0x17, 0x30,  // CCx_MCSM1 (0x30=110000 defaults to idle for RX,TX CCA_MODE=11  If RSSI below threshold unless currently receiving a packet)
+  0x17, 0x3F,  // CCx_MCSM1 (0x30=110000 defaults to idle for RX,TX CCA_MODE=11  If RSSI below threshold unless currently receiving a packet)
   0x18, 0x18,  // CCx_MCSM0 (0x18=11000 FS_AUTOCAL=1 When going from IDLE to RX or TX)
   0x19, 0x16,  // CCx_FOCCFG
   0x1B, 0x43,  // CCx_AGCCTRL2
@@ -141,64 +143,116 @@ static uint8_t cc_write(uint8_t addr, uint8_t b) {
   return result;
 }
 
-static uint8_t cc_read(uint8_t addr)
+/******************************************************
+* It is important to read the fifo with the minimal
+* number of SPI cycles because data is accumulating
+* while we are reading it.
+*
+* This is especially the case whenwe process the bytes
+* that contain the Evo payload length becaue we don't
+* want the last byte of the packet to get into the FIFO
+* before we've set the pktLen.
+*/
+static uint8_t cc_read_fifo(uint8_t *buffer, uint8_t readAll)
 {
-  uint8_t result;
-  spi_assert();
+  uint16_t nByte,nByte1=255;
+
+  while( 1 ) {
+    uint8_t status;
+
+    spi_assert();
+    while( SPI_PORT & (1 << SPI_MISO) );
+
+    status = spi_send(CC1100_FIFO|0x40|0x80); // FFIFO+read+burst
+    nByte = status & 0x0F;
+    if( nByte==nByte1   ) break;  // Same 
+    if( nByte==nByte1+1 ) break;  // or one byte added to fifo
+    nByte1 = nByte;
+
+    while (SPI_PORT & (1 << SPI_MISO));
+    spi_deassert();
+  }
+
+  if( nByte>0 )
+  {
+    if( !readAll ) nByte -= 1;
+    for( nByte1=0; nByte1<nByte; nByte1++ )
+    {
+      *buffer = spi_send(0);
+      buffer++;
+    }
+  }
+
   while (SPI_PORT & (1 << SPI_MISO));
-
-  result = spi_send( addr | 0x80 );
-  result = spi_send(0);
-
-  while (SPI_PORT & (1 << SPI_MISO));
-
   spi_deassert();
-  return result;
+
+  return nByte;  
 }
 
-#if defined(USE_FIFO)
 
-static  uint16_t frameLen;
+#if defined(USE_FIFO)
 
 #define FRAME_INT ( 1 << GDO0_INT )
 #define FIFO_INT  ( 1 << GDO2_CLK_INT )
 #define INT_MASK  ( FRAME_INT | FIFO_INT )
 
+static uint16_t frameLen;
+static uint16_t rxBytes;
+static uint8_t writePktLen = 1;
+
+static uint8_t rx_data[64];
+
+static void start_rx(void) {
+  frameLen = 0xFFFF;
+  writePktLen = 1;
+  rxBytes = 0;
+  bs_accept_octet(0x00);
+}
+
 static void read_fifo(uint8_t readAll)
 {
-  uint8_t nByte=1,nByte1=0;
+ uint8_t *data =rx_data;
+  uint8_t nByte = cc_read_fifo( data, readAll );
 
-  nByte = cc_read(CC1100_SFTX|0x40);	// Read RXFIFO length
-  while(1) {
-    nByte1 = cc_read(CC1100_SFTX|0x40);	// Read RXFIFO length
-    if(  nByte==nByte1 ) break;
-    nByte = nByte1;
-  }
-
-  if( nByte==0 )
-    return;
-
-  if( !readAll ) nByte--;  // leave one byte in FIFO (see CC1101 errata)
-
-  while( nByte )
+  while( nByte-- )
   {
-    uint8_t data = cc_read(CC1100_FIFO);
-    uint8_t mask = 0x80;
+    uint16_t bs_status = bs_accept_octet( *data );
+    data++;
+    rxBytes++;
 
-    while( mask )
-    {
-      uint8_t bit = ( data & mask ) ? 1:0 ;
-      if (accept_bit(bit) != 0) {
-        // Non-0 is a request to switch to transmit mode. This is called from interrupt
-        // handlers. Actual switch is delayed until main loop.
-        radio_state = RS_CHANGE_TO_TX;
+    if( bs_status == BS_END_OF_PACKET ) { 
+      readAll = 1;
+    } else if( bs_status > BS_MAX_STATUS ) { // Final packet length
+      if( frameLen==0xFFFF ) {
+        frameLen = bs_status;
+        cc_write( 0x06, frameLen & 0xFF );
       }
-      mask >>= 1;
     }
 
-    nByte--;
+    if( frameLen != 0xFFFF ) {
+      while( rxBytes>255 ) {
+        rxBytes -= 256;
+        frameLen -= 256;
+      }
+
+      if( writePktLen &&  frameLen < 256 ) {
+        writePktLen = 0; // Only write this once
+        cc_write( 0x08, 0x00 );
+      }
+    }
   }
 }
+
+static void process_rx(void) {
+  read_fifo(0);  // Leave at least 1 byte in FIFO (see errata)
+}
+
+static void end_rx(void) {
+  cc_write( 0x08, 0x02 ); // Infinite packet length
+  read_fifo(1);  // We can empty FIFO now
+  bs_accept_octet(0xFF);
+}
+
 
 ISR(GDO0_INTVECT) {
   // Frame interrupt
@@ -207,14 +261,14 @@ ISR(GDO0_INTVECT) {
   case FRAME_RX_START:  // Start of RX frame;
     EICRA &= ~( 1 << GDO0_INT_ISCn0 );       // Trigger on next falling edge
     frame_state = FRAME_RX;
-    frameLen = 0;
+    start_rx();
     break;
 
   case FRAME_RX:  // End of RX Frame
     EICRA |=  ( 1 << GDO0_INT_ISCn0 );       // Trigger on next rising edge
-    frame_state = FRAME_IDLE;
-    radio_state = RS_CHANGE_TO_TX;
-    read_fifo(1);  // We can empty FIFO now
+    frame_state = FRAME_RX_START;
+//    radio_state = RS_CHANGE_TO_TX;
+    end_rx();
     break;
 
 
@@ -232,7 +286,7 @@ ISR(GDO0_INTVECT) {
 
 ISR(GDO2_CLK_INTVECT) {
   // Fifo level
-  read_fifo(0);  // Leave at least 1 byte in FIFO (see errata)
+  process_rx();
 }
 
 #else
@@ -277,6 +331,8 @@ ISR(GDO2_CLK_INTVECT) {
 static void cc_enter_rx_mode(void) {
   EIMSK &= ~INT_MASK;            // Disable interrupts
 
+  cc_write( 0x08, 0x02 ); // set up for infinte packet
+
   while ((spi_strobe(CC1100_SIDLE) & CC1100_STATUS_STATE_BM) != CC1100_STATE_IDLE);
   spi_strobe(CC1100_SFRX);
   while ((spi_strobe(CC1100_SRX) & CC1100_STATUS_STATE_BM) != CC1100_STATE_RX);
@@ -292,14 +348,16 @@ static void cc_enter_rx_mode(void) {
   EICRA |= (1 << GDO2_CLK_INT_ISCn0);      // ... rising edge
 #else
   GDO0_DATA_DDR &= ~(1 << GDO0_DATA_PIN);    // Set data pin for input
-  EICRA |=  (1 << GDO2_CLK_INT_ISCn1);       // Set falling edge
-  EICRA &= ~(1 << GDO2_CLK_INT_ISCn0);       //   ...
+  EICRA |= (1 << GDO2_CLK_INT_ISCn1);      // Set edge trigger
+  EICRA |= (1 << GDO2_CLK_INT_ISCn0);      // ... rising edge
 #endif
   EIMSK |= INT_MASK;            // Enable interrupts
 }
 
 static void cc_enter_tx_mode(void) {
   EIMSK &= ~INT_MASK;            // Disable interrupts
+
+  cc_write( 0x08, 0x02 ); // Set infinite packet
 
   while ((spi_strobe(CC1100_SIDLE) & CC1100_STATUS_STATE_BM) != CC1100_STATE_IDLE);
   while ((spi_strobe(CC1100_STX) & CC1100_STATUS_STATE_BM) != CC1100_STATE_TX);

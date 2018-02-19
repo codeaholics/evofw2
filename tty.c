@@ -15,22 +15,20 @@ static rb_t rx_buffer;
 ISR(TTY_UDRE_VECT) {
   UDR0 = rb_get(&tx_buffer);
   if (tx_buffer.nbytes == 0) {
-	  UCSR0B &= ~(1 << UDRIE0);
+    UCSR0B &= ~(1 << UDRIE0);
   }
 }
 
-#if !defined(USE_FIFO)
-Disable TTY RX because it will try to trigger chnage to TX mode and stop RX
+//Disable TTY RX because it will try to trigger chnage to TX mode and stop RX
 // RX byte ready
 ISR(TTY_RX_VECT) {
   uint8_t data  = UDR0;
   uint8_t flags = UCSR0A;
 
   if ((flags & ((1 << FE0) | (1 << DOR0))) == 0) {
-    rb_put(&rx_buffer, data);
+//    rb_put(&rx_buffer, data);
   }
 }
-#endif
 
 void tty_init(outbound_byte_fn o) {
   outbound_byte = o;
@@ -53,7 +51,7 @@ void tty_work(void) {
   }
 }
 
-static void tty_write_char(char c) {
+void tty_write_char(char c) {
   // Silently drop characters if the buffer is full...
   if ((tx_buffer.nbytes < RINGBUF_SIZE - 2) ||
       (tx_buffer.nbytes < RINGBUF_SIZE && (c == '\r' || c == '\n'))) {
@@ -66,11 +64,12 @@ void tty_write_str(char *s) {
   while (*s) tty_write_char(*s++);
 }
 
-// void tty_write_hex(uint8_t n) {
-//   uint8_t b = n >> 4;
-//   if (b < 10) tty_write_char(b + 48);
-//   if (b >= 10) tty_write_char(b + 55);
-//   b = n & 0x0F;
-//   if (b < 10) tty_write_char(b + 48);
-//   if (b >= 10) tty_write_char(b + 55);
-// }
+void tty_write_hex(uint8_t byte) {
+  static char const hex[16] = {
+    '0','1','2','3','4','5','6','7',
+    '8','9','A','B','C','D','E','F'
+  };
+
+  tty_write_char( hex[ byte >>  4 ] );
+  tty_write_char( hex[ byte & 0xF ] );
+}

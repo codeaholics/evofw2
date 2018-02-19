@@ -5,8 +5,10 @@
 #ifndef _HW_NANO_V3_H_
 #define _HW_NANO_V3_H_
 
+#include <avr/io.h>
+
 #define UART_BAUD_RATE   16 // 115200 @ 16MHz
-#define RINGBUF_SIZE    128
+#define RINGBUF_SIZE    256
 
 // SPI port defs
 #define SPI_PORT    PORTB

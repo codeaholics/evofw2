@@ -11,7 +11,7 @@ SRC = $(TARGET).c                              \
 		tty.c                                      \
 		cc1101.c                                   \
 		led.c                                      \
-		driver.c                                   \
+		bitstream.c                                   \
 		transcoder.c
 
 OPT = s

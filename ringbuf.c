@@ -36,3 +36,7 @@ uint8_t rb_get(rb_t *rb) {
   SREG = sreg;
   return ret;
 }
+
+uint8_t rb_empty(rb_t *rb) { return rb->nbytes==0; }
+uint8_t rb_full(rb_t *rb) { return rb->nbytes==RINGBUF_SIZE; }
+

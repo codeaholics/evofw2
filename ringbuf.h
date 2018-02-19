@@ -25,5 +25,7 @@ typedef struct
 void rb_put(rb_t *rb, uint8_t data);
 uint8_t rb_get(rb_t *rb);
 void rb_reset(rb_t *rb);
+uint8_t rb_empty(rb_t *rb);
+uint8_t rb_full(rb_t *rb);
 
 #endif
