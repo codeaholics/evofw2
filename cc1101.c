@@ -6,6 +6,11 @@
 #include "bitstream.h"
 #include "cc1101.h"
 
+#define FRAME_INT_ENTER DEBUG1_ON
+#define FRAME_INT_LEAVE DEBUG1_OFF
+#define FIFO_INT_ENTER  DEBUG2_ON
+#define FIFO_INT_LEAVE  DEBUG2_OFF
+
 // Strobe commands and regiosters
 #define CC1100_SRES    0x30
 #define CC1100_SCAL    0x33
@@ -96,13 +101,51 @@ enum frame_state {
 };
 static volatile uint8_t frame_state;
 
-static void spi_init(void) {
-  SPI_PORT |= (1 << SPI_SCLK);
-  SPI_DDR  |= ((1 << SPI_MOSI) | (1 << SPI_SCLK) | (1 << SPI_SS));
-  SPI_DDR  &= ~(1 << SPI_MISO);
+static void spi_set_clock( uint32_t Fosc, uint32_t sckFreq )
+{
+  // ATMEGA328 data sheet Table23-5 
+  // Relationship between SCK and Oscillator Frequency
+  static struct spi_sck_options {
+    uint8_t spi2x :1;
+    uint8_t spr1  :1;
+    uint8_t spr0  :1;
+  } const sck_options[8] = {
+    { 1,0,0 },  // Fosc/2^0 (1) - not supported - defaults to Fosc/2
+    { 1,0,0 },  // Fosc/2^1 (2)   max SCK frequency
+    { 0,0,0 },  // Fosc/2^2 (4)
+    { 1,0,1 },  // Fosc/2^3 (8)
+    { 0,0,1 },  // Fosc/2^4 (16)
+    { 1,1,0 },  // Fosc/2^5 (32)
+    { 0,1,0 },  // Fosc/2^6 (64)
+    { 0,1,1 }   // Fosc/2^7 (128) min SCK frequency
+  }, *opt;
 
-  SPCR  = (1 << MSTR) | (1 << SPE) | (1 << SPR1) | (1 << SPR0);
-  // SPSR |= (1 << SPI2X);
+  uint8_t power=0;
+  while( sckFreq < Fosc ) {
+    sckFreq <<= 1;
+    power++;
+  }
+  if( power>7 ) power = 7;
+  opt = &sck_options[power];
+
+  SPSR &= ~( 1 << SPI2X );
+  SPCR &= ~( 1 << SPR1 );
+  SPCR &= ~( 1 << SPR0 );
+
+  SPSR |= opt->spi2x << SPI2X ;
+  SPCR |= opt->spr1 << SPR1 ;
+  SPCR |= opt->spr0 << SPR0 ;
+}
+
+static void spi_init(void) {
+  SPI_PORT |= ( 1 << SPI_SCLK );
+
+  SPI_DDR |= ( 1 << SPI_MOSI ) | ( 1 << SPI_SCLK ) | ( 1 << SPI_SS );
+  SPI_DDR &= ~(1 << SPI_MISO);
+
+  SPCR = 0;
+  spi_set_clock( F_CPU,  SPI_CLK_RATE );
+  SPCR |= ( 1 << MSTR ) | ( 1 << SPE ) ;
 }
 
 static inline uint8_t spi_send(uint8_t data) {
@@ -255,6 +298,7 @@ static void end_rx(void) {
 
 
 ISR(GDO0_INTVECT) {
+FRAME_INT_ENTER
   // Frame interrupt
   switch( frame_state )
   {
@@ -282,11 +326,14 @@ ISR(GDO0_INTVECT) {
     frame_state = FRAME_IDLE;
     break;
   }
+FRAME_INT_LEAVE
 }
 
 ISR(GDO2_CLK_INTVECT) {
   // Fifo level
+FIFO_INT_ENTER
   process_rx();
+FIFO_INT_LEAVE
 }
 
 #else

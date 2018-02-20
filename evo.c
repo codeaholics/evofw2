@@ -13,6 +13,10 @@ void main_init(void) {
   wdt_disable();
   led_init();
 
+#if defined(DEBUG_PORT)
+  DEBUG_DDR |= ( DEBUG_PIN1 + DEBUG_PIN2 + DEBUG_PIN3 );
+#endif
+
   // Wire up components
   transcoder_init(&tty_write_str, 0);//&driver_send_byte);
   bs_init();

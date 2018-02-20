@@ -11,4 +11,20 @@
 #  error "No hardware target defined"
 #endif
 
+#if defined(DEBUG_PORT)
+#define DEBUG1_ON    ( DEBUG_PORT |=  DEBUG_PIN1 );
+#define DEBUG1_OFF   ( DEBUG_PORT &= ~DEBUG_PIN1 );
+#define DEBUG2_ON    ( DEBUG_PORT |=  DEBUG_PIN2 );
+#define DEBUG2_OFF   ( DEBUG_PORT &= ~DEBUG_PIN2 );
+#define DEBUG3_ON    ( DEBUG_PORT |=  DEBUG_PIN3 );
+#define DEBUG3_OFF   ( DEBUG_PORT &= ~DEBUG_PIN3 );
+#else
+#define DEBUG1_ON
+#define DEBUG1_OFF
+#define DEBUG2_ON
+#define DEBUG2_OFF
+#define DEBUG3_ON
+#define DEBUG3_OFF
+#endif
+
 #endif

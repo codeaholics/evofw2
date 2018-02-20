@@ -7,7 +7,6 @@
 
 #include <avr/io.h>
 
-#define UART_BAUD_RATE   16 // 115200 @ 16MHz
 #define RINGBUF_SIZE    256
 
 // SPI port defs
@@ -17,6 +16,7 @@
 #define SPI_MOSI    3
 #define SPI_MISO    4
 #define SPI_SCLK    5
+#define SPI_CLK_RATE 250000
 
 // Connection to CC1101 GDO2
 #define GDO2_CLK_PIN         2
@@ -36,9 +36,17 @@
 #define GDO0_DATA_PIN     3
 #define GDO0_DATA_IN      PIND
 
+// SOme debug pins
+#define DEBUG_PORT        PORTD
+#define DEBUG_DDR         DDRD
+#define DEBUG_PIN1        ( 1<<4 )
+#define DEBUG_PIN2        ( 1<<5 )
+#define DEBUG_PIN3        ( 1<<6 )
+
 // TTY USART
 #define TTY_UDRE_VECT   USART_UDRE_vect
 #define TTY_RX_VECT     USART_RX_vect
+#define TTY_BAUD_RATE   115200
 
 // LED
 #define LED_DDR   DDRB
