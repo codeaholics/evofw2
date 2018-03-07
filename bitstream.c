@@ -2,6 +2,7 @@
 
 #include "config.h"
 
+#include "ringbuf.h"
 #include "cc1101.h"
 #include "transcoder.h"
 #include "bitstream.h"
@@ -120,8 +121,10 @@
 
 #define CC1101_SYNC 0xFF80     /* 1111 1111 1000 0000 */
 #define EVO_SYNCH   0x2CCAAACA /* 0010 1100 1100 1010 1010 1010 1100 1010 */
-#define EVO_EOF     0xC5       /* 1100 0101 */
+#define EVO_EOF     0xAC       /* 1010 1100 */
 #define BIT_TRAIN   0xAA       /* 1010 1010 */
+
+static uint8_t evo_header[4];
 
 uint16_t bs_sync_word(void){ return CC1101_SYNC; }
 
@@ -161,16 +164,16 @@ static uint8_t const man_encode[16] = {
 static uint8_t man_decode[256];
 
 static void manchester_init(void) {
-  uint8_t i;
+  uint16_t i;
   
-  for( i=0; i<sizeof( man_encode ); i++ )
-  	man_decode[ man_encode[i] ] = 0xFF;
+  for( i=0; i<sizeof( man_decode ); i++ )
+    man_decode[ i ] = 0xFF;
 
   for( i=0; i<sizeof( man_encode ); i++ )
-  	man_decode[ man_encode[i] ] = i;
+    man_decode[ man_encode[i] ] = i;
 }
 
-static inline int manchester_code_valid( uint8_t code ) { return man_encode[code] !=0xFF ; }
+static inline int manchester_code_valid( uint8_t code ) { return man_decode[code]!=0xFF ; }
 
 static inline uint8_t manchester_decode( uint8_t byte1, uint8_t byte2 ) { 
   uint8_t decoded;
@@ -182,8 +185,11 @@ static inline uint8_t manchester_decode( uint8_t byte1, uint8_t byte2 ) {
 }
 
 static inline void manchester_encode( uint8_t value, uint8_t *byte1, uint8_t *byte2 ) {
-  *byte1 = man_encode[ ( value >> 4 ) & 0xFF ];
-  *byte2 = man_encode[ ( value      ) & 0xFF ];
+  *byte1 = man_encode[ ( value >> 4 ) & 0xF ];
+  *byte2 = man_encode[ ( value      ) & 0xF ];
+//tty_write_char('E'); tty_write_hex(value);
+//tty_write_char('M'); tty_write_hex(*byte1);
+//tty_write_char('m'); tty_write_hex(*byte2);
 }
 
 /*****************************************************************
@@ -322,8 +328,7 @@ static void rx_data(void) { // Process the byte now in rx.data
       // have we processed the payload and checksum
       decoded = 0;
       return;
-    }
-    else {
+    } else {
       decode_error |= 1;
       byte = man_decode[15];	// Protect against subsequent decode - generate 0xF
       transcoder_rx_status(TC_RX_MANCHESTER_DECODE_ERROR);
@@ -558,119 +563,217 @@ BS_RX_LEAVE
 *
 */
 
-static uint16_t tx_msgLen;
-static uint8_t tx_checksum;
+static uint16_t txMsglen; // Length of message to be transmitted
+static uint16_t txBytes;  // Number of bytes processed
+static uint16_t txPktlen; // Length of packet to be transmitted
+static uint16_t txOctets; // Nnmber of octets transferred to FIFO
 
-static uint16_t tx_pktLen;
-static uint8_t tx_fifo;
-static uint8_t tx_active;
+static rb_t tx_msg;
 
 // Start/stop insertion control
 static union shift_register tx;
-static uint8_t tx_state;
+static uint8_t txBits;   // Number of valid bits in shift register
 
 static inline void insert_p(void)  { tx.data <<= 1 ; tx.data |= 0x01; }
 static inline void insert_s(void)  { tx.data <<= 1 ; }
 static inline void insert_ps(void) { insert_p(); insert_s(); }
 static inline void send( uint8_t n ) { tx.reg <<= n ; }
-static void tx_data(void) { // transmit the octet in tx.data 
-  tx_fifo = cc_tx_fifo( tx.data );
-  tx_pktLen--;
-
-  if( !tx_active ) {
-    if( tx_pktLen==0 || tx_fifo > 60 ) 
-      tx_active = cc_tx_start();
-  }
+static uint8_t tx_data(void) {
+   txOctets++;
+//tty_write_char('+');tty_write_hex(tx.data);
+   return cc_put_octet( tx.data );
 }
 
-static void tx_byte( uint8_t byte ) { // convert byte to octets
+static uint8_t tx_byte( uint8_t byte ) { // convert byte to octets
+  uint8_t count = 0;
+
   tx.bits = byte;
+//tty_write_char('>');tty_write_hex(byte);
 
   // For each 4 bytes of data we send 5 octets of bitstream
   // so in each state cycle there is one case which generates
   // two octets
-  switch( tx_state )
-  { 
+  switch( txBits )
+  {
   // Even bit alignment
-  case 0: insert_ps(); send(6); tx_data(); send(2); tx_state=2; break;
-  case 2: insert_ps(); send(4); tx_data(); send(4); tx_state=4; break;
-  case 4: insert_ps(); send(2); tx_data(); send(6);   // Fall through
-  case 6: insert_ps();          tx_data();          tx_state=8; break;
-  case 8:              send(8); tx_data();          tx_state=0; break;
+  case 0: insert_ps(); send(6); count += tx_data(); send(2); txBits=2; break;
+  case 2: insert_ps(); send(4); count += tx_data(); send(4); txBits=4; break;
+  case 4: insert_ps(); send(2); count += tx_data(); send(6);   // Fall through
+  case 6: insert_ps();          count += tx_data();          txBits=8; break;
+  case 8:              send(8); count += tx_data();          txBits=0; break;
 
   // Odd bit alignment
-  case 1: insert_p();  send(7); tx_data(); send(1); tx_state=3; break;
-  case 3: insert_ps(); send(5); tx_data(); send(3); tx_state=5; break;
-  case 5: insert_ps(); send(3); tx_data(); send(5); tx_state=7; break;
-  case 7: insert_ps(); send(1); tx_data(); send(7);   // Fall through
-  case 9: insert_s();           tx_data();          tx_state=1; break;
+  case 1: insert_p();  send(7); count += tx_data(); send(1); txBits=3; break;
+  case 3: insert_ps(); send(5); count += tx_data(); send(3); txBits=5; break;
+  case 5: insert_ps(); send(3); count += tx_data(); send(5); txBits=7; break;
+  case 7: insert_ps(); send(1); count += tx_data(); send(7);   // Fall through
+  case 9: insert_s();           count += tx_data();          txBits=1; break;
   }
+
+  return count;
 }
 
-static void tx_reset( uint16_t msgLen ) {
-  if( tx_active ) { // currently transmitting
-    // TODO:  tell the CC1101 to abort?  Handle follow on packet?
+static uint8_t encode_byte( uint8_t msgByte ) {
+  uint8_t count=0;
+  uint8_t byte0, byte1;
+
+  manchester_encode( msgByte, &byte0, &byte1 );
+  count += tx_byte( byte0 );
+  count += tx_byte( byte1 );
+
+  return count;
+}
+
+/***********************************************************
+* Radio TX pull interface
+*/
+
+enum tx_state {
+  TX_IDLE,        // No TX in progress
+  TX_WAITING,     // TX requested but not active yet
+  TX_ACTIVE,      // TX frame has started
+  TX_IN_FIFO,     // All of data in FIFO
+  TX_CLOSING,     // Waiting for end of frame
+  TX_MAX
+} txState = TX_IDLE;
+
+// Called from radio ISR to see if there's a TX pending
+uint8_t bs_enable_tx(void) {
+  if( txState == TX_WAITING )
+    return 1;
+
+  return 0;
+}
+
+// Called from radio ISR at beginning of TX frame
+uint16_t bs_start_tx(void) {
+  uint16_t pktLen = 0;
+
+  if( txState == TX_WAITING ) {
+    pktLen = txPktlen;
+    txState = TX_ACTIVE;
   }
 
-  tx_msgLen = msgLen;
-  tx_checksum = 0;
+  return pktLen;
+}
 
-  // Calculate number of octets in new packet
-  tx_pktLen  = msgLen;   // bytes in Evo Message
-  tx_pktLen += 1;        // checksum 
-  tx_pktLen *= 2;        // Manchester encoded bytes
-  tx_pktLen += 1;        // EVO_EOF
+// Called from radio ISR when it allows more data
+uint8_t bs_process_tx( uint8_t space ) {
 
-  tx_pktLen *= 10;       // Convert to bits including start/stop
-  tx_pktLen += 7;        // Allow for possible bitstream padding in last octet
+  if( txState == TX_IDLE )
+    return 0;
 
-  tx_pktLen /= 8;        // convert to octets
-  tx_pktLen += 4;        // EVO_SYNCH
+  while( space && ( txOctets < sizeof(evo_header) ) ) {
+    // Send Evo header directly to radio
+    tx.data = evo_header[txOctets];
+    space -= tx_data();
+  }
 
+  if( txBytes < txMsglen ) {
+    // Transfer message to radio
+    while( space > 5 ) {
+      // Room for a message byte and Evo Trailer/padding
+      if( !rb_empty( &tx_msg ) )
+      {
+        uint8_t msgByte;
 
-  // Tell the CC1101 about the packet we're about to transmit
-  tx_active = cc_tx_packet( tx_pktLen );
+        msgByte = rb_get( &tx_msg );
+        space -= encode_byte( msgByte );
+        txBytes++;
+      }
+      else
+        break;
+    }
+  }
 
-  // Put 32 bit EVO_SYNCH in TX FIFO
-  tx.reg = EVO_SYNCH >> 16   ; tx_data(); send(8); tx_data();
-  tx.reg = EVO_SYNCH & 0xFFFF; tx_data(); send(8); tx_data();
+  if( txBytes == txMsglen ) {
+    // Append Evo trailer
+    if( txOctets < txPktlen ) {
+      // space test above guarantees room
+      tx_byte( EVO_EOF );
+      while( txOctets < txPktlen )
+        tx_byte(0xAA); // Padding
+    }
+  }
 
-  tx_state = 0;	// First byte will be spBBBBBB
+  if( txOctets == txPktlen ) {
+    // Everything is now in FIFO
+    if( txState == TX_ACTIVE )
+      txState = TX_CLOSING;
+  }
+
+//tty_write_char('{');
+//tty_write_hex(txOctets);
+//tty_write_char(':');
+//tty_write_hex(txState);
+//tty_write_char('}');
+
+  return ( txState == TX_CLOSING );
+}
+
+// Called from radio ISR at end of TX frame
+void bs_end_tx(void) {
+  txState = TX_IDLE;
+  // TODO: tell transcoder we've finished
+}
+
+/***********************************************************
+* Transcoder TX interface
+*/
+
+uint8_t bs_send_message( uint16_t msgLen ) {
+  uint16_t pktLen;
+
+  if( txState != TX_IDLE )
+    return 0;
+
+//tty_write_hex(msgLen);
+
+  pktLen  = msgLen;   // Message bytes
+  pktLen *= 2;        // Manchester codes
+  pktLen *= 10;       // Message bits
+  pktLen += 32;       // Evo Header
+  pktLen += 10;       // Evo Trailer (inc start/stop)
+  pktLen += 7;        // Padding
+  pktLen /= 8;        // octets
+
+  txMsglen = msgLen;
+  txBytes = 0;
+  txPktlen = pktLen;
+  txOctets = 0;
+  txBits = 0;  // First thing we need to do is insert Stop/Start
+
+  txState = TX_WAITING;
+
+  cc_tx_trigger();
+
+  return 1;
+}
+
+uint8_t bs_send_data( uint8_t msgByte ) {
+  if( rb_full( &tx_msg ) )
+    return 0;
+
+//tty_write_char('%'); tty_write_hex(msgByte);
+
+  rb_put( &tx_msg, msgByte );
+
+  if( txState != TX_IDLE )
+    cc_tx_trigger();
+
+  return 1;
 }
 
 /******************************************************/
 
-void bs_tx_data( uint8_t *data, uint16_t dataLen, uint16_t msgLen )
-{
-
-  if( msgLen ) { // New packet
-    tx_reset( msgLen );
-  }
-
-  while( dataLen ) { // More data in this buffer
-    uint8_t byte,byte1,byte2;
-
-	byte = *(data++);
-	dataLen--;
-
-	manchester_encode( byte, &byte1, &byte2 );
-	tx_byte( byte1 );
-	tx_byte( byte2 );
-
-	tx_checksum += byte;
-	tx_msgLen--;
-
-	if( tx_msgLen==0 ) {
-          tx_byte( ~tx_checksum + 1 );
-	  tx_byte( EVO_EOF );
-	  if( tx_pktLen != 0 )
-	    tx_byte( BIT_TRAIN ); // Pad with training bits - any PS bits we insert are compatible
-    }
-  }
-}
-
 void bs_init(void)
 {
+  uint8_t i;
+  uint32_t hdr ;
+  for( i=4, hdr=EVO_SYNCH ; i>0 ; i--, hdr>>=8 )
+    evo_header[i-1] = hdr & 0xFF;
+
+  rb_reset( &tx_msg );
   manchester_init();
 }
 

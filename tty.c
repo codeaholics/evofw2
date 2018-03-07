@@ -19,14 +19,13 @@ ISR(TTY_UDRE_VECT) {
   }
 }
 
-//Disable TTY RX because it will try to trigger chnage to TX mode and stop RX
 // RX byte ready
 ISR(TTY_RX_VECT) {
   uint8_t data  = UDR0;
   uint8_t flags = UCSR0A;
 
   if ((flags & ((1 << FE0) | (1 << DOR0))) == 0) {
-//    rb_put(&rx_buffer, data);
+    rb_put(&rx_buffer, data);
   }
 }
 

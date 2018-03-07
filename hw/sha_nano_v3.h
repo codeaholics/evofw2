@@ -36,6 +36,14 @@
 #define GDO0_DATA_PIN     3
 #define GDO0_DATA_IN      PIND
 
+// Software interrupt
+#define SW_INT           ( 1<<PCIE2 )
+#define SW_INT_VECT      PCINT2_vect
+#define SW_INT_MASK      PCMSK2
+#define SW_INT_PORT      PIND
+#define SW_INT_DDR       DDRD
+#define SW_INT_PIN       ( 1<<7 )
+
 // SOme debug pins
 #define DEBUG_PORT        PORTD
 #define DEBUG_DDR         DDRD

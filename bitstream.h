@@ -19,6 +19,16 @@ enum bs_accept_octet_codes {
 };
 extern uint16_t bs_accept_octet( uint8_t bits );
 
+// bitstream TX data pull interface
+extern uint8_t bs_enable_tx(void);
+extern uint16_t bs_start_tx(void);
+extern uint8_t bs_process_tx( uint8_t space );
+extern void bs_end_tx(void);
+
+// Transcoder TX push data interface
+extern uint8_t bs_send_message( uint16_t msgLen );
+extern uint8_t bs_send_data( uint8_t msgByte );
+
 extern void bs_init(void);
 
 #endif

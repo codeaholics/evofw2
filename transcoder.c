@@ -7,6 +7,7 @@
 #include "errors.h"
 #include "tty.h"
 #include "ringbuf.h"
+#include "bitstream.h"
 #include "transcoder.h"
 
 #define S_HEADER     0
@@ -255,7 +256,7 @@ void transcoder_accept_inbound_byte(uint8_t b, uint8_t status) {
 
 #if defined(USE_FIFO)
 
-static rb_t rx_buffer;
+static rb_t rx_msg;
 
 uint16_t transcoder_param_len( uint8_t hdr ) {
   uint16_t paramLen = 0;
@@ -272,20 +273,20 @@ uint16_t transcoder_param_len( uint8_t hdr ) {
 }
 
 void transcoder_rx_byte( uint8_t byte ) {
-  if( byte==0xFF ) rb_put( &rx_buffer, 0xFF ); // Add escape char
-  rb_put( &rx_buffer, byte );
+  if( byte==0xFF ) rb_put( &rx_msg, 0xFF ); // Add escape char
+  rb_put( &rx_msg, byte );
 }
 
 void transcoder_rx_status( uint8_t status ) {
-  rb_put( &rx_buffer, 0xFF );  // Add escape char
-  rb_put( &rx_buffer, status );
+  rb_put( &rx_msg, 0xFF );  // Add escape char
+  rb_put( &rx_msg, status );
 }
 
 static void transcoder_rx_work(void) {
   static uint8_t status=0;
 
-  while( !rb_empty( &rx_buffer )) {
-   uint8_t byte = rb_get(&rx_buffer);
+  while( !rb_empty( &rx_msg )) {
+   uint8_t byte = rb_get(&rx_msg);
     if( byte==0xFF && status==0 ) {
       status = 1; // Escape value seen
     } else {
@@ -326,7 +327,7 @@ void transcoder_work(void) {
 }
 #endif
 
-#define SEND(byte) { checksum += byte; send_byte(byte, 0); }
+#define SEND(byte) { bs_send_data(byte); checksum += byte; }
 
 static uint8_t pack_flags(uint8_t flags) {
   for (uint8_t i = 0; i < sizeof(HEADER_FLAGS); i++) {
@@ -341,15 +342,20 @@ void transcoder_accept_outbound_byte(uint8_t b) {
   static uint8_t field = 0;
   static uint8_t p = 0;
   static uint8_t checksum = 0;
+  static uint16_t msgLen = 0;
   static char buff[12];
 
+tty_write_char(b);
+
   if (b == '\n' || b == '\r') {
+tty_write_char('\n');
     if (field == 0 && p == 0) return;  // Empty string; most likely CR-LF pair
 
     if (field == 7) {
-      send_byte(-checksum, 1);
+      SEND(-checksum);
+      bs_send_message( msgLen );
     } else {
-      send_byte(0x11, 1);
+//      send_byte(0x11, 1);
     }
 
     // reset state
@@ -423,6 +429,7 @@ void transcoder_accept_outbound_byte(uint8_t b) {
     uint8_t header = pack_flags(flags);
     if (header != 0xFF) {
       SEND(header);
+      msgLen = 1;
     } else {
       field = -1;
       return;
@@ -432,18 +439,21 @@ void transcoder_accept_outbound_byte(uint8_t b) {
       SEND((addrs[0] >> 16) & 0xFF);
       SEND((addrs[0] >> 8) & 0xFF);
       SEND(addrs[0] & 0xFF);
-    }
+      msgLen += 3;
+   }
 
     if (has_addr1(flags)) {
       SEND((addrs[1] >> 16) & 0xFF);
       SEND((addrs[1] >> 8) & 0xFF);
       SEND(addrs[1] & 0xFF);
+      msgLen += 3;
     }
 
     if (has_addr2(flags)) {
       SEND((addrs[2] >> 16) & 0xFF);
       SEND((addrs[2] >> 8) & 0xFF);
       SEND(addrs[2] & 0xFF);
+      msgLen += 3;
     }
   }
 
@@ -452,12 +462,16 @@ void transcoder_accept_outbound_byte(uint8_t b) {
     sscanf(buff, "%04X", &cmd);
     SEND((cmd >> 8) & 0xFF);
     SEND(cmd & 0xFF);
+    msgLen += 2;
   }
 
   if (field == 6) {
     uint8_t len;
     sscanf(buff, "%03hhu", &len);
     SEND(len);
+    msgLen += 1;    // Payload length
+    msgLen += len;  // Payload
+    msgLen += 1;    // CHecksum
   }
 
   p = 0;
