@@ -7,7 +7,7 @@
 
 #include <avr/io.h>
 
-#define RINGBUF_SIZE    256
+#define RINGBUF_SIZE    128
 
 // SPI port defs
 #define SPI_PORT    PORTB
