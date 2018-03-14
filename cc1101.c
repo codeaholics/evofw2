@@ -447,7 +447,6 @@ static void cc_enable_tx(void) {
 }
 
 static void cc_start_tx(void) {
-//tty_write_char('#');
   // TX Frame detected
   uint16_t pktLen = bs_start_tx();
 
@@ -471,7 +470,6 @@ static void cc_start_tx(void) {
 
 // Called whenever we have opportunity to update CC1101
 static void cc_process_tx( uint8_t writeAll ) {
-//tty_write_char('?');
   // use txSpace to influence how much work we allow BS to do
   uint8_t txSpace = 64 - cc_read( CC1100_TXBYTES );
   if( !writeAll && txSpace > 8 )
@@ -487,7 +485,6 @@ static void cc_process_tx( uint8_t writeAll ) {
 }
 
 static void cc_end_tx(void) {
-//tty_write_char('&');
   cc_enable_rx();
 
   bs_end_tx();
@@ -570,8 +567,6 @@ FIFO_INT_LEAVE
 */
 
 ISR(SW_INT_VECT) {
-//tty_write_char('!');
-#if 1
   switch( frame_state ) {
     case FRAME_IDLE:
       cc_process_tx( 1 );
@@ -584,7 +579,6 @@ ISR(SW_INT_VECT) {
       // Rely on RX activity to process data
       break;
   }
-#endif
 }
 
 static void cc_tx_init(void) {

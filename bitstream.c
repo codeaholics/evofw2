@@ -7,9 +7,6 @@
 #include "transcoder.h"
 #include "bitstream.h"
 
-#define BS_RX_ENTER     DEBUG3_ON
-#define BS_RX_LEAVE     DEBUG3_OFF
-
 /*********************************************************
 *
 * bitstream.c
@@ -187,9 +184,6 @@ static inline uint8_t manchester_decode( uint8_t byte1, uint8_t byte2 ) {
 static inline void manchester_encode( uint8_t value, uint8_t *byte1, uint8_t *byte2 ) {
   *byte1 = man_encode[ ( value >> 4 ) & 0xF ];
   *byte2 = man_encode[ ( value      ) & 0xF ];
-//tty_write_char('E'); tty_write_hex(value);
-//tty_write_char('M'); tty_write_hex(*byte1);
-//tty_write_char('m'); tty_write_hex(*byte2);
 }
 
 /*****************************************************************
@@ -295,7 +289,7 @@ static uint16_t payload_offset;	// location in decoded bytes of message payload
 
 // Start/stop bit stripping
 static union shift_register rx;
-static uint8_t rx_state;
+static uint8_t rxBits;
 
 // Packet synchronisation state
 static uint32_t synch_pattern;
@@ -351,7 +345,6 @@ static void rx_data(void) { // Process the byte now in rx.data
 }
 
 uint16_t bs_accept_octet( uint8_t bits ) {
-BS_RX_ENTER
 
   /*------------------------------------------------------------*/
   /* Special values used to control the bitstream processing    */
@@ -370,7 +363,6 @@ BS_RX_ENTER
     synch_bits = 0;
 
     transcoder_rx_status(TC_RX_START);
-BS_RX_LEAVE
     return synchronised;
   }
 
@@ -387,7 +379,6 @@ BS_RX_LEAVE
 
     // Reset fro next packet
     synchronised = BS_NOT_SYNCHRONISED;
-BS_RX_LEAVE
     return rx_octets;  // Tell CC1101 how many octets it gave us
   }
 
@@ -397,7 +388,6 @@ BS_RX_LEAVE
   // TODO: check the CC1101 isn't sending us spurious bytes beyond the end of the packet
 
   if( synchronised == BS_ABORT ) {
-BS_RX_LEAVE
     return synchronised;
   }
 
@@ -422,11 +412,11 @@ BS_RX_LEAVE
       if( synchronised ) { // Found it!
         // Now work out what state the next byte represents
         // Start by assuming we used all the bits of the last octet
-        rx_state = 8;
+        rxBits = 8;
         while( mask ) { // Logically process any remaining bits
           // Cycle the state for each bit we haven't consumed
           // This includes stop/start bits to be discarded
-          rx_state = ( rx_state + 1 ) % 10;
+          rxBits = ( rxBits + 1 ) % 10;
           mask >>= 1;
         }
 
@@ -441,7 +431,6 @@ BS_RX_LEAVE
 
     // TODO: Consider error if EVO_SYCH not found in a timely manner
 
-BS_RX_LEAVE
     return synchronised;
   }
 
@@ -460,21 +449,21 @@ BS_RX_LEAVE
    * We don't bother to explicitly discard trailing bits in 2,1
    * Every other case explicitly processes 8 bits
    */
-  switch( rx_state )
+  switch( rxBits )
   {
   // Even bit alignment
-  case 8:                       discard(2); keep(6); rx_state=6; break;
-  case 6: keep(2);  rx_data();  discard(2); keep(4); rx_state=4; break;
-  case 4: keep(4);  rx_data();  discard(2); keep(2); rx_state=2; break;
-  case 2: keep(6);  rx_data();  /* discard(2); */    rx_state=0; break;
-  case 0: keep(8);  rx_data();                       rx_state=8; break;
+  case 8:                       discard(2); keep(6); rxBits=6; break;
+  case 6: keep(2);  rx_data();  discard(2); keep(4); rxBits=4; break;
+  case 4: keep(4);  rx_data();  discard(2); keep(2); rxBits=2; break;
+  case 2: keep(6);  rx_data();  /* discard(2); */    rxBits=0; break;
+  case 0: keep(8);  rx_data();                       rxBits=8; break;
 
   // Odd bit alignment
-  case 9:                       discard(1); keep(7); rx_state=7; break;
-  case 7: keep(1);  rx_data();  discard(2); keep(5); rx_state=5; break;
-  case 5: keep(3);  rx_data();  discard(2); keep(3); rx_state=3; break;
-  case 3: keep(5);  rx_data();  discard(2); keep(1); rx_state=1; break;
-  case 1: keep(7);  rx_data();  /* discard(1); */    rx_state=9; break;
+  case 9:                       discard(1); keep(7); rxBits=7; break;
+  case 7: keep(1);  rx_data();  discard(2); keep(5); rxBits=5; break;
+  case 5: keep(3);  rx_data();  discard(2); keep(3); rxBits=3; break;
+  case 3: keep(5);  rx_data();  discard(2); keep(1); rxBits=1; break;
+  case 1: keep(7);  rx_data();  /* discard(1); */    rxBits=9; break;
   }
 
   if( decode_error ) {
@@ -509,8 +498,8 @@ BS_RX_LEAVE
 
       // Convert to bits outstanding
       rx_pktLen *= 10; 	      // Convert to bits including start/stop
-      rx_pktLen -= rx_state;  // bits still in shift register (accounted for in rx_octets)
-      if( rx_state > 7 )
+      rx_pktLen -= rxBits;    // bits still in shift register (accounted for in rx_octets)
+      if( rxBits > 7 )
         rx_pktLen += 10;      // next octet has leading stop/start bits
       rx_pktLen += 7;         // allow for padding with bit training
 
@@ -519,7 +508,6 @@ BS_RX_LEAVE
       rx_pktLen += rx_octets; // Add in what we've already received
 
       // Special case return
-BS_RX_LEAVE
       return rx_pktLen;	  // Always at least 20: evo_synch[5] hdr[2.5] cmd[5] len[2.5] pl[1.25] csum[2.5] evo_eof[1.25]
     } else {
       synchronised = BS_ABORT;  // Can't work out packet length now
@@ -531,14 +519,12 @@ BS_RX_LEAVE
     if( rx_checksum != 0 )
       transcoder_rx_status(TC_RX_CHECKSUM_ERROR);
 
-BS_RX_LEAVE
     return BS_END_OF_PACKET;
   }
 
   if( synchronised==BS_ABORT )
     transcoder_rx_status(TC_RX_ABORTED);
 
-BS_RX_LEAVE
   return synchronised;
 }
 
@@ -580,7 +566,6 @@ static inline void insert_ps(void) { insert_p(); insert_s(); }
 static inline void send( uint8_t n ) { tx.reg <<= n ; }
 static uint8_t tx_data(void) {
    txOctets++;
-//tty_write_char('+');tty_write_hex(tx.data);
    return cc_put_octet( tx.data );
 }
 
@@ -588,7 +573,6 @@ static uint8_t tx_byte( uint8_t byte ) { // convert byte to octets
   uint8_t count = 0;
 
   tx.bits = byte;
-//tty_write_char('>');tty_write_hex(byte);
 
   // For each 4 bytes of data we send 5 octets of bitstream
   // so in each state cycle there is one case which generates
@@ -702,12 +686,6 @@ uint8_t bs_process_tx( uint8_t space ) {
       txState = TX_CLOSING;
   }
 
-//tty_write_char('{');
-//tty_write_hex(txOctets);
-//tty_write_char(':');
-//tty_write_hex(txState);
-//tty_write_char('}');
-
   return ( txState == TX_CLOSING );
 }
 
@@ -726,8 +704,6 @@ uint8_t bs_send_message( uint16_t msgLen ) {
 
   if( txState != TX_IDLE )
     return 0;
-
-//tty_write_hex(msgLen);
 
   pktLen  = msgLen;   // Message bytes
   pktLen *= 2;        // Manchester codes
@@ -753,8 +729,6 @@ uint8_t bs_send_message( uint16_t msgLen ) {
 uint8_t bs_send_data( uint8_t msgByte ) {
   if( rb_full( &tx_msg ) )
     return 0;
-
-//tty_write_char('%'); tty_write_hex(msgByte);
 
   rb_put( &tx_msg, msgByte );
 
