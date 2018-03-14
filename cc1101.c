@@ -151,7 +151,7 @@ static const uint8_t PROGMEM CC_REGISTER_VALUES[] = {
   0x14, 0xF8,  // CCx_MDMCFG0
   0x15, 0x50,  // CCx_DEVIATN
   0x16, 0x07,  // CCx_MCSM2
-  0x17, 0x3F,  // CCx_MCSM1 (0x30=110000 defaults to idle for RX,TX CCA_MODE=11  If RSSI below threshold unless currently receiving a packet)
+  0x17, 0x2F,  // CCx_MCSM1 CCA_MODE unless currently receiving a packet, RXOFF_MODE stay in RX, TX_OFF_MODE RX
   0x18, 0x18,  // CCx_MCSM0 (0x18=11000 FS_AUTOCAL=1 When going from IDLE to RX or TX)
   0x19, 0x16,  // CCx_FOCCFG
   0x1B, 0x43,  // CCx_AGCCTRL2
