@@ -17,6 +17,7 @@ extern void transcoder_rx_byte( uint8_t byte );
 enum transcoder_rx_status {
   TC_RX_IDLE,
   TC_RX_START,
+  TC_RX_RSSI,
   TC_RX_END,
   TC_RX_ABORTED,
   TC_RX_MANCHESTER_DECODE_ERROR,

@@ -100,6 +100,8 @@
 #define CC1100_RXFIFO         ( CC1100_FIFO     | CC_BURST )
 #define CC1100_TXFIFO         ( CC1100_FIFO     | CC_BURST )
 
+#define CC1100_RSSI_OFFSET ( 74 /* CC1101 datasheet table 31 */ )
+
 // Chip Status byte
 #define CC_CHIP_RDY    0x80
 #define CC_STATE_MASK  0x70
@@ -410,6 +412,7 @@ static void cc_enable_rx(void) {
 
 // Called From Frame interrupt when RX start detected
 static void cc_start_rx(void) {
+  uint8_t rssi;
 
   // Configure FIFO interrupt to use RX fifo
   // Signal asserts when FIFO is at or above threshhold
@@ -424,7 +427,13 @@ static void cc_start_rx(void) {
   writePktLen = 1;
   rxBytes = 0;
 
+  // CC1101 has just detected SYNC WORD
+  // Tell bitstream new frame has started
   bs_accept_octet(0x00);
+
+  // RSSI value is latched after SYNC WORD
+  rssi = cc_read( CC1100_RSSI );
+  bs_rx_rssi( rssi-CC1100_RSSI_OFFSET );
 }
 
 static void cc_process_rx(void) {

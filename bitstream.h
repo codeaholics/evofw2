@@ -18,6 +18,7 @@ enum bs_accept_octet_codes {
   // Anything bigger than this is a packet length indication
 };
 extern uint16_t bs_accept_octet( uint8_t bits );
+extern void bs_rx_rssi( uint8_t rssi);
 
 // bitstream TX data pull interface
 extern uint8_t bs_enable_tx(void);
