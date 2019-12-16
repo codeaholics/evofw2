@@ -347,7 +347,7 @@ static uint8_t rx_data[64];
 
 static void read_fifo(uint8_t readAll)
 {
- uint8_t *data =rx_data;
+  uint8_t *data =rx_data;
   uint8_t nByte = cc_read_fifo( data, readAll );
 
   while( nByte-- )
@@ -362,6 +362,14 @@ static void read_fifo(uint8_t readAll)
       if( frameLen==0xFFFF ) {
         frameLen = bs_status;
         cc_write( 0x06, frameLen & 0xFF );
+      }
+    } else if( bs_status > BS_END_OF_PACKET ) { //  This is an error condition
+      if( writePktLen ) {
+		// Tell the packet handler to end the frame
+	    // but capture a few more bytes for diagnostics
+        cc_write( 0x06, ( rxBytes+4 ) & 0xFF );
+        cc_write( 0x08, 0x00 );
+        writePktLen = 0;
       }
     }
 
