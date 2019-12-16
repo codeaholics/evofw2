@@ -13,6 +13,8 @@
 #  error "No hardware target defined"
 #endif
 
+#define USE_FIFO
+
 #if defined(DEBUG_PORT)
 #define DEBUG1_ON    ( DEBUG_PORT |=  DEBUG_PIN1 );
 #define DEBUG1_OFF   ( DEBUG_PORT &= ~DEBUG_PIN1 );

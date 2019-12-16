@@ -61,6 +61,4 @@
 #define LED_PORT  PORTB
 #define LED_PIN   5
 
-#define USE_FIFO
-
 #endif
