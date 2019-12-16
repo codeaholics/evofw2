@@ -1,3 +1,7 @@
+#include "config.h"
+
+#if !defined(USE_FIFO)
+
 #include <string.h>
 #include "driver.h"
 #include "ringbuf.h"
@@ -240,3 +244,5 @@ uint8_t driver_request_bit(void) {
   bit_counter++;
   return bit;
 }
+
+#endif // !USE_FIFO
