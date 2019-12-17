@@ -56,7 +56,7 @@ void transcoder_init(write_str_fn w, send_byte_fn s) {
 void transcoder_accept_inbound_byte(uint8_t b, uint8_t status) {
   static uint8_t checksum = 0;
   static uint8_t state = S_HEADER;
-  static int8_t  rssi;
+  static uint8_t rssi;
   static uint8_t multi_bytes = 0;
   static union {
     uint16_t word16;
@@ -68,7 +68,7 @@ void transcoder_accept_inbound_byte(uint8_t b, uint8_t status) {
 
   if( status==TC_RX_RSSI )
   {
-    rssi = (int8_t)b;
+    rssi = b;
     return;
   }
   
@@ -130,8 +130,7 @@ void transcoder_accept_inbound_byte(uint8_t b, uint8_t status) {
     multi_bytes = 0;
     minibuf.word32 = 0;
 
-    // RSSI value is 0.5 dBm, don't print fraction so it fits in 3 chars
-    sprintf( str,"%3d ",rssi/2 );
+    sprintf( str,"%03d ",rssi );
     write_str(str);
     
     if (is_information(flags)) { write_str(" I --- "); return; }

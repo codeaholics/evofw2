@@ -100,7 +100,7 @@
 #define CC1100_RXFIFO         ( CC1100_FIFO     | CC_BURST )
 #define CC1100_TXFIFO         ( CC1100_FIFO     | CC_BURST )
 
-#define CC1100_RSSI_OFFSET ( 74 /* CC1101 datasheet table 31 */ )
+#define CC1100_RSSI_OFFSET ( 0 /*74*/ /* CC1101 datasheet table 31 */ )
 
 // Chip Status byte
 #define CC_CHIP_RDY    0x80
